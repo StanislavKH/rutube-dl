@@ -33,7 +33,7 @@ func main() {
 		log.Printf("Downloading file from URL: %s\n", *fileLink)
 		err := rutubedl.DownloadFile(*fileLink, 5) // Using 5 workers as an example
 		if err != nil {
-			log.Fatalf("Failed to download file: %v", err)
+			log.Fatalf("failed to download file: %v", err)
 		}
 	} else {
 		fmt.Println("Please provide either a -list_id or a -file_link option")
