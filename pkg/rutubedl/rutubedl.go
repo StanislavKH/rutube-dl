@@ -188,35 +188,45 @@ func getSegmentData(uri string) ([]byte, error) {
 	return nil, fmt.Errorf("failed to download segment after retries: %v", err)
 }
 
-// fetchPlaylistSegments fetches and parses the .m3u8 playlist to extract segment URLs
-func fetchPlaylistSegments(playlistURL string) ([]string, string, error) {
-
+// getWithRetry performs an HTTP GET request with retry logic.
+// It retries the request up to MaxRetries times with a delay between attempts.
+func getWithRetry(url string, timeout time.Duration, maxRetries int, retryDelay time.Duration) (*http.Response, error) {
 	var resp *http.Response
 	var err error
 
-	for attempts := 1; attempts <= MaxRetries; attempts++ {
-
-		ctx, cancel := context.WithTimeout(context.Background(), Timeout)
+	for attempts := 1; attempts <= maxRetries; attempts++ {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		req, reqErr := http.NewRequestWithContext(ctx, "GET", playlistURL, nil)
+		req, reqErr := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if reqErr != nil {
-			return nil, "", fmt.Errorf("error creating request: %v", reqErr)
+			return nil, fmt.Errorf("error creating request: %v", reqErr)
 		}
 
-		resp, err = http.DefaultClient.Do(req)
+		client := &http.Client{}
+		resp, err = client.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
-			defer resp.Body.Close()
-			break
+			return resp, nil
 		}
 
-		if attempts < MaxRetries {
-			log.Printf("Attempt %d/%d: Failed to fetch playlist, retrying in %v...\n", attempts, MaxRetries, RetryDelay)
-			time.Sleep(RetryDelay)
+		if attempts < maxRetries {
+			log.Printf("Attempt %d/%d: Failed to fetch URL, retrying in %v...\n", attempts, maxRetries, retryDelay)
+			time.Sleep(retryDelay)
 		} else {
-			return nil, "", fmt.Errorf("error fetching playlist after %d attempts: %v", MaxRetries, err)
+			return nil, fmt.Errorf("failed to fetch URL after %d attempts: %v", maxRetries, err)
 		}
 	}
+
+	return nil, err
+}
+
+// fetchPlaylistSegments fetches and parses the .m3u8 playlist to extract segment URLs
+func fetchPlaylistSegments(playlistURL string) ([]string, string, error) {
+	resp, err := getWithRetry(playlistURL, Timeout, MaxRetries, RetryDelay)
+	if err != nil {
+		return nil, "", fmt.Errorf("error fetching playlist: %v", err)
+	}
+	defer resp.Body.Close()
 
 	playlist, listType, err := m3u8.DecodeFrom(resp.Body, true)
 	if err != nil {
@@ -271,12 +281,8 @@ func buildMediaLinkForSegment(originalLink, postfix string) string {
 }
 
 func checkM3U8Availability(url string) (bool, *m3u8.MediaPlaylist, error) {
-	client := http.Client{
-		Timeout: Timeout,
-	}
-
-	resp, err := client.Get(url)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	resp, err := getWithRetry(url, Timeout, MaxRetries, RetryDelay)
+	if err != nil {
 		return false, nil, fmt.Errorf("URL not available: %v", err)
 	}
 	defer resp.Body.Close()
