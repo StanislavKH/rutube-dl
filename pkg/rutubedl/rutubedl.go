@@ -350,41 +350,6 @@ func extractVideoID(videoURL string) (string, error) {
 	return matches[1], nil
 }
 
-// downloadSegment downloads a media segment and writes it to a temporary file with retry logic
-func downloadSegment(url string, outputDir string, bar *progressbar.ProgressBar) (string, error) {
-	var fileName string
-
-	for attempts := 1; attempts <= MaxRetries; attempts++ {
-		resp, err := http.Get(url)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			log.Printf("Attempt %d: the greedy service is not giving the segment, let's try again....\n", attempts)
-			time.Sleep(RetryDelay) // Wait before the next retry
-			continue
-		}
-		defer resp.Body.Close()
-
-		fileName = filepath.Join(outputDir, filepath.Base(url))
-		file, err := os.Create(fileName)
-		if err != nil {
-			return "", fmt.Errorf("error creating file %s: %v", fileName, err)
-		}
-		defer file.Close()
-
-		_, err = io.Copy(file, resp.Body)
-		if err != nil {
-			log.Printf("Attempt %d: Error writing to file %s: %v. Retrying...\n", attempts, fileName, err)
-			time.Sleep(RetryDelay) // Wait before the next retry
-			continue
-		}
-
-		bar.Add(1)
-		return fileName, nil
-	}
-
-	// If all retries fail, return an error
-	return "", fmt.Errorf("failed to download segment %s after %d attempts", url, MaxRetries)
-}
-
 // mergeSegments merges all downloaded segments into a single output file
 func mergeSegments(segmentFiles []string, outputFileName string) error {
 	outputFile, err := os.Create(outputFileName)
