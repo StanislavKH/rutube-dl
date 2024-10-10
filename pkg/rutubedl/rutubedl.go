@@ -30,40 +30,6 @@ const (
 	OutputDir        = "./downloads"
 )
 
-// VideoType enum to represent different video types
-//type VideoType string
-
-/*const (
-	Video  VideoType = "video"
-	Shorts VideoType = "shorts"
-	Yappy  VideoType = "yappy"
-)*/
-
-// VideoDownloader struct to hold video details and configuration
-type VideoDownloader struct {
-	VideoURL  string
-	VideoData VideoAbstract
-	OutputDir string
-}
-
-// NewVideoDownloader initializes a new VideoDownloader instance
-func NewVideoDownloader(videoURL, outputDir string) (*VideoDownloader, error) {
-	if outputDir == "" {
-		outputDir = OutputDir
-	}
-
-	data, err := fetchVideoDetails(videoURL)
-	if err != nil {
-		return nil, fmt.Errorf("error fetching video data: %v", err)
-	}
-
-	return &VideoDownloader{
-		VideoURL:  videoURL,
-		VideoData: data,
-		OutputDir: outputDir,
-	}, nil
-}
-
 // VideoAbstract interface defines the common methods for video types
 type VideoAbstract interface {
 	GetID() string
@@ -71,7 +37,6 @@ type VideoAbstract interface {
 	GetResolution() string
 	GetVideoFileSegments() []string
 	GetVideoFileSegmentsCount() int
-	Write(stream io.Writer, workers int) error
 }
 
 type VideoData struct {
@@ -115,35 +80,6 @@ func (rv *RutubeVideo) GetResolution() string {
 	return rv.VideoResolution
 }
 
-// Write downloads video segments concurrently and writes them to the stream
-func (rv *RutubeVideo) Write(stream io.Writer, workers int) error {
-	var wg sync.WaitGroup
-	segmentChan := make(chan string, len(rv.SegmentURLs))
-
-	// Start workers to download segments
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for uri := range segmentChan {
-				data, err := getSegmentData(uri)
-				if err == nil {
-					stream.Write(data)
-				}
-			}
-		}()
-	}
-
-	// Feed segment URLs to channel
-	for _, uri := range rv.SegmentURLs {
-		segmentChan <- uri
-	}
-	close(segmentChan)
-	wg.Wait()
-
-	return nil
-}
-
 // YappyVideo struct represents a Yappy video
 type YappyVideo struct {
 	ID              string
@@ -159,33 +95,6 @@ func (yv *YappyVideo) GetTitle() string {
 // GetResolution returns the resolution of the Yappy video
 func (yv *YappyVideo) GetResolution() string {
 	return "1920x1080"
-}
-
-// Write downloads the Yappy video content and writes it to the stream
-func (yv *YappyVideo) Write(stream io.Writer, workers int) error {
-	resp, err := http.Get(yv.VideoLink)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download Yappy video: %v", err)
-	}
-	defer resp.Body.Close()
-	_, err = io.Copy(stream, resp.Body)
-	return err
-}
-
-// getSegmentData fetches the data for a given segment URL with retries
-func getSegmentData(uri string) ([]byte, error) {
-	var err error
-	var resp *http.Response
-
-	for retries := MaxRetries; retries > 0; retries-- {
-		resp, err = http.Get(uri)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			defer resp.Body.Close()
-			return io.ReadAll(resp.Body)
-		}
-		time.Sleep(Timeout)
-	}
-	return nil, fmt.Errorf("failed to download segment after retries: %v", err)
 }
 
 // getWithRetry performs an HTTP GET request with retry logic.
