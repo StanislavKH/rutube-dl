@@ -23,8 +23,8 @@ import (
 const (
 	DataURLTemplate  = "https://rutube.ru/api/play/options/%s/?no_404=true&referer=https%%253A%%252F%%252Frutube.ru&pver=v2"
 	YappyURLTemplate = "https://rutube.ru/pangolin/api/web/yappy/yappypage/?client=wdp&source=shorts&videoId=%s"
-	MaxRetries       = 5
-	Timeout          = 120 * time.Second
+	MaxRetries       = 3
+	Timeout          = 60 * time.Second
 	RetryDelay       = 2 * time.Second
 	ForbiddenChars   = "/\\:*?\"<>|"
 	OutputDir        = "./downloads"
@@ -234,7 +234,7 @@ func fetchPlaylistSegments(playlistURL string) ([]string, string, error) {
 	}
 
 	var segmentURLs []string
-	var resolution string
+	var resolution string = "unknown"
 
 	switch listType {
 	case m3u8.MEDIA:
@@ -244,13 +244,13 @@ func fetchPlaylistSegments(playlistURL string) ([]string, string, error) {
 				segmentURLs = append(segmentURLs, segment.URI)
 			}
 		}
-		resolution = "unknown"
 		return segmentURLs, resolution, nil
 	case m3u8.MASTER:
 		masterPlaylist := playlist.(*m3u8.MasterPlaylist)
 		for _, variant := range masterPlaylist.Variants {
 			if variant != nil {
-				if variant.Resolution == "1920x1080" {
+				if strings.HasPrefix(variant.Resolution, "1920x") {
+					resolution = variant.Resolution
 					ok, mediaList, err := checkM3U8Availability(variant.URI)
 					if !ok || err != nil {
 						log.Println("segments URI not available, will try next one")
@@ -266,7 +266,6 @@ func fetchPlaylistSegments(playlistURL string) ([]string, string, error) {
 				}
 			}
 		}
-		resolution = "1920x1080"
 		return segmentURLs, resolution, nil
 	default:
 		return segmentURLs, resolution, errors.New("unknown play list type")
