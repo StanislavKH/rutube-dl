@@ -1,6 +1,7 @@
 package rutubedl
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -189,11 +190,33 @@ func getSegmentData(uri string) ([]byte, error) {
 
 // fetchPlaylistSegments fetches and parses the .m3u8 playlist to extract segment URLs
 func fetchPlaylistSegments(playlistURL string) ([]string, string, error) {
-	resp, err := http.Get(playlistURL)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("error fetching playlist: %v", err)
+
+	var resp *http.Response
+	var err error
+
+	for attempts := 1; attempts <= MaxRetries; attempts++ {
+
+		ctx, cancel := context.WithTimeout(context.Background(), Timeout)
+		defer cancel()
+
+		req, reqErr := http.NewRequestWithContext(ctx, "GET", playlistURL, nil)
+		if reqErr != nil {
+			return nil, "", fmt.Errorf("error creating request: %v", reqErr)
+		}
+
+		resp, err = http.DefaultClient.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			break
+		}
+
+		if attempts < MaxRetries {
+			log.Printf("Attempt %d/%d: Failed to fetch playlist, retrying in %v...\n", attempts, MaxRetries, RetryDelay)
+			time.Sleep(RetryDelay)
+		} else {
+			return nil, "", fmt.Errorf("error fetching playlist after %d attempts: %v", MaxRetries, err)
+		}
 	}
-	defer resp.Body.Close()
 
 	playlist, listType, err := m3u8.DecodeFrom(resp.Body, true)
 	if err != nil {
@@ -334,7 +357,7 @@ func downloadSegment(url string, outputDir string, bar *progressbar.ProgressBar)
 	for attempts := 1; attempts <= MaxRetries; attempts++ {
 		resp, err := http.Get(url)
 		if err != nil || resp.StatusCode != http.StatusOK {
-			fmt.Printf("Attempt %d: Error downloading segment: %v. Retrying...\n", attempts, err)
+			log.Printf("Attempt %d: the greedy service is not giving the segment, let's try again....\n", attempts)
 			time.Sleep(RetryDelay) // Wait before the next retry
 			continue
 		}
@@ -349,7 +372,7 @@ func downloadSegment(url string, outputDir string, bar *progressbar.ProgressBar)
 
 		_, err = io.Copy(file, resp.Body)
 		if err != nil {
-			fmt.Printf("Attempt %d: Error writing to file %s: %v. Retrying...\n", attempts, fileName, err)
+			log.Printf("Attempt %d: Error writing to file %s: %v. Retrying...\n", attempts, fileName, err)
 			time.Sleep(RetryDelay) // Wait before the next retry
 			continue
 		}
@@ -387,7 +410,8 @@ func mergeSegments(segmentFiles []string, outputFileName string) error {
 	return nil
 }
 
-func DownloadFile(fileLink string) error {
+// DownloadFile downloads the video file using multiple concurrent workers.
+func DownloadFile(fileLink string, numWorkers int) error {
 	video, err := fetchVideoDetails(fileLink)
 	if err != nil {
 		return fmt.Errorf("error fetching video details: %v", err)
@@ -410,26 +434,97 @@ func DownloadFile(fileLink string) error {
 		progressbar.OptionClearOnFinish(),
 	)
 
-	// Download each segment to the output directory
+	// Create channels for segment URLs and results
+	segmentChan := make(chan string, numSegments)
+	errChan := make(chan error, numWorkers)
 	var segmentFiles []string
-	for _, segmentURL := range video.GetVideoFileSegments() {
-		segmentFile, err := downloadSegment(segmentURL, tmpOutputDir, bar)
-		if err != nil {
-			return fmt.Errorf("error downloading segment: %v", err)
-		}
-		segmentFiles = append(segmentFiles, segmentFile)
+	var segmentFilesMutex sync.Mutex
+
+	// Launch workers
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for segmentURL := range segmentChan {
+				segmentFile, err := downloadSegmentWithContext(segmentURL, tmpOutputDir, bar)
+				if err != nil {
+					errChan <- fmt.Errorf("error downloading segment: %v", err)
+					return
+				}
+				segmentFilesMutex.Lock()
+				segmentFiles = append(segmentFiles, segmentFile)
+				segmentFilesMutex.Unlock()
+			}
+		}()
 	}
 
-	// Merge all downloaded segments into a single video file
+	for _, segmentURL := range video.GetVideoFileSegments() {
+		segmentChan <- segmentURL
+	}
+	close(segmentChan)
+
+	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
+	}
+
 	err = mergeSegments(segmentFiles, outputFileName)
 	if err != nil {
 		return fmt.Errorf("error merging segments: %v", err)
 	}
+
+	// Cleanup temporary output directory
 	err = os.RemoveAll(tmpOutputDir)
 	if err != nil {
-		return fmt.Errorf("error removing folder: %v", err)
+		return fmt.Errorf("error removing temporary directory: %v", err)
 	}
-	log.Printf("Video downloaded and saved to: %s\n", outputFileName)
 
+	log.Printf("Video downloaded and saved to: %s\n", outputFileName)
 	return nil
+}
+
+// downloadSegmentWithContext downloads a media segment using a context for timeout control.
+func downloadSegmentWithContext(url, outputDir string, bar *progressbar.ProgressBar) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), Timeout)
+	defer cancel()
+
+	var fileName string
+	for attempts := 1; attempts <= MaxRetries; attempts++ {
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return "", fmt.Errorf("error creating request: %v", err)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			log.Printf("Attempt %d: Failed to download segment, retrying...\n", attempts)
+			time.Sleep(RetryDelay)
+			continue
+		}
+		defer resp.Body.Close()
+
+		fileName = filepath.Join(outputDir, filepath.Base(url))
+		file, err := os.Create(fileName)
+		if err != nil {
+			return "", fmt.Errorf("error creating file %s: %v", fileName, err)
+		}
+		defer file.Close()
+
+		_, err = io.Copy(file, resp.Body)
+		if err != nil {
+			log.Printf("Attempt %d: Error writing to file %s: %v. Retrying...\n", attempts, fileName, err)
+			time.Sleep(RetryDelay)
+			continue
+		}
+
+		bar.Add(1)
+		return fileName, nil
+	}
+
+	return "", fmt.Errorf("failed to download segment %s after %d attempts", url, MaxRetries)
 }
