@@ -24,6 +24,7 @@ const (
 	YappyURLTemplate = "https://rutube.ru/pangolin/api/web/yappy/yappypage/?client=wdp&source=shorts&videoId=%s"
 	MaxRetries       = 5
 	Timeout          = 120 * time.Second
+	RetryDelay       = 2 * time.Second
 	ForbiddenChars   = "/\\:*?\"<>|"
 	OutputDir        = "./downloads"
 )
@@ -326,32 +327,39 @@ func extractVideoID(videoURL string) (string, error) {
 	return matches[1], nil
 }
 
-// downloadSegment downloads a media segment and writes it to a temporary file
+// downloadSegment downloads a media segment and writes it to a temporary file with retry logic
 func downloadSegment(url string, outputDir string, bar *progressbar.ProgressBar) (string, error) {
-	resp, err := http.Get(url)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("error downloading segment: %v", err)
+	var fileName string
+
+	for attempts := 1; attempts <= MaxRetries; attempts++ {
+		resp, err := http.Get(url)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			fmt.Printf("Attempt %d: Error downloading segment: %v. Retrying...\n", attempts, err)
+			time.Sleep(RetryDelay) // Wait before the next retry
+			continue
+		}
+		defer resp.Body.Close()
+
+		fileName = filepath.Join(outputDir, filepath.Base(url))
+		file, err := os.Create(fileName)
+		if err != nil {
+			return "", fmt.Errorf("error creating file %s: %v", fileName, err)
+		}
+		defer file.Close()
+
+		_, err = io.Copy(file, resp.Body)
+		if err != nil {
+			fmt.Printf("Attempt %d: Error writing to file %s: %v. Retrying...\n", attempts, fileName, err)
+			time.Sleep(RetryDelay) // Wait before the next retry
+			continue
+		}
+
+		bar.Add(1)
+		return fileName, nil
 	}
-	defer resp.Body.Close()
 
-	// Create a temporary file to save the segment
-	fileName := filepath.Join(outputDir, filepath.Base(url))
-	file, err := os.Create(fileName)
-	if err != nil {
-		return "", fmt.Errorf("error creating file %s: %v", fileName, err)
-	}
-	defer file.Close()
-
-	// Write the segment content to the file
-	_, err = io.Copy(file, resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("error writing to file %s: %v", fileName, err)
-	}
-
-	// Update the progress bar only once for each segment download
-	bar.Add(1)
-
-	return fileName, nil
+	// If all retries fail, return an error
+	return "", fmt.Errorf("failed to download segment %s after %d attempts", url, MaxRetries)
 }
 
 // mergeSegments merges all downloaded segments into a single output file
