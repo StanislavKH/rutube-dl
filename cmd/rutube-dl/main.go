@@ -15,7 +15,7 @@ func main() {
 
 	for _, file := range urls {
 
-		err := rutubedl.DownloadFile(file)
+		err := rutubedl.DownloadFile(file, 4)
 		if err != nil {
 			fmt.Println(err)
 		}
