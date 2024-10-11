@@ -290,15 +290,21 @@ func mergeSegments(segmentFiles []string, outputFileName string) error {
 }
 
 // DownloadFile downloads the video file using multiple concurrent workers.
-func DownloadFile(fileLink string, numWorkers int) error {
+func DownloadFile(fileLink string, customOutputDir *string, numWorkers int) error {
 	video, err := fetchVideoDetails(fileLink)
 	if err != nil {
 		return fmt.Errorf("error fetching video details: %v", err)
 	}
-	outputFileName := fmt.Sprintf("%s.mp4", video.GetTitle())
+
+	rootOutputDir := OutputDir
+	if customOutputDir != nil && *customOutputDir != "" {
+		rootOutputDir = *customOutputDir
+	}
+
+	outputFileName := filepath.Join(rootOutputDir, fmt.Sprintf("%s.mp4", video.GetTitle()))
 
 	// Ensure the output directory exists
-	tmpOutputDir := fmt.Sprintf("%s/%s", OutputDir, video.GetID())
+	tmpOutputDir := filepath.Join(rootOutputDir, video.GetID())
 	err = os.MkdirAll(tmpOutputDir, os.ModePerm)
 	if err != nil {
 		return fmt.Errorf("error creating output directory: %v", err)

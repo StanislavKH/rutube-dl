@@ -23,7 +23,7 @@ func main() {
 		}
 		for _, file := range list {
 			log.Printf("processing: %s\n", file.Title)
-			err := rutubedl.DownloadFile(file.VideoURL, 4)
+			err := rutubedl.DownloadFile(file.VideoURL, "dwl", 4)
 			if err != nil {
 				fmt.Println(err)
 				continue
@@ -31,7 +31,7 @@ func main() {
 		}
 	} else if *fileLink != "" {
 		log.Printf("Downloading file from URL: %s\n", *fileLink)
-		err := rutubedl.DownloadFile(*fileLink, 5) // Using 5 workers as an example
+		err := rutubedl.DownloadFile(*fileLink, "dwl", 5) // Using 5 workers as an example
 		if err != nil {
 			log.Fatalf("failed to download file: %v", err)
 		}
