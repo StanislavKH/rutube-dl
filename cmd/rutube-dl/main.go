@@ -37,6 +37,10 @@ func main() {
 			log.Fatalf("failed to download file: %v", err)
 		}
 	} else {
-		fmt.Println("Please provide either a -list_id or a -file_link option")
+		fmt.Println("Usage: Provide either a -list_id or a -file_link option")
+		fmt.Println("Example:")
+		fmt.Println("  - To download a list: go run main.go -list_id=<list-id> [-dir=<directory>]")
+		fmt.Println("  - To download a file: go run main.go -file_link=<file-url> [-dir=<directory>]")
+		fmt.Println("\nNote: The -dir option is optional. If not specified, it defaults to 'downloads'.")
 	}
 }
