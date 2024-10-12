@@ -6,15 +6,15 @@ import (
 	"net/http"
 )
 
-const playlistFeedURI = "https://rutube.ru/api/metainfo/tv/%s/video/?type\x3d2\x26show_all\x3d1\x26sort\x3dseries_d\x26show_hidden_videos\x3dFalse\x26fields\x3dextra_params,future_publication"
+const playlistFeedURI = "https://rutube.ru/api/metainfo/tv/%s/video/"
 
 type PlaylistFeed struct {
-	HasNext  bool        `json:"has_next"`
-	Next     interface{} `json:"next"`
-	Previous interface{} `json:"previous"`
-	Page     int         `json:"page"`
-	PerPage  int         `json:"per_page"`
-	Results  []Result    `json:"results"`
+	HasNext  bool     `json:"has_next"`
+	Next     *string  `json:"next"`
+	Previous *string  `json:"previous"`
+	Page     int      `json:"page"`
+	PerPage  int      `json:"per_page"`
+	Results  []Result `json:"results"`
 }
 
 type Result struct {
@@ -88,14 +88,14 @@ type PgRating struct {
 }
 
 type ProcessedOut struct {
+	Episode  int
 	Title    string
 	VideoURL string
 	FeedName string
 }
 
-func GetItemsListFromFeedURI(feedID string) ([]ProcessedOut, error) {
-	url := fmt.Sprintf(playlistFeedURI, feedID)
-	resp, err := http.Get(url)
+func retrieveFeed(link string) (*PlaylistFeed, error) {
+	resp, err := http.Get(link)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("error fetching feed data: %v", err)
 	}
@@ -107,10 +107,44 @@ func GetItemsListFromFeedURI(feedID string) ([]ProcessedOut, error) {
 		return nil, fmt.Errorf("error decoding feed data: %v", err)
 	}
 
+	return &data, nil
+}
+
+func fetchAllFeedResults(url string) ([]Result, error) {
+	var resultsBank []Result
+
+	// Retrieve the first page
+	data, err := retrieveFeed(url)
+	if err != nil {
+		return nil, err
+	}
+	resultsBank = append(resultsBank, data.Results...)
+
+	for data.HasNext && data.Next != nil {
+		nextURL := *data.Next
+		data, err = retrieveFeed(nextURL)
+		if err != nil {
+			return nil, err
+		}
+		resultsBank = append(resultsBank, data.Results...)
+	}
+
+	return resultsBank, nil
+}
+
+func GetItemsListFromFeedURI(feedID string) ([]ProcessedOut, error) {
+	url := fmt.Sprintf(playlistFeedURI, feedID)
+
+	resultsBank, err := fetchAllFeedResults(url)
+	if err != nil {
+		return nil, err
+	}
+
 	var result []ProcessedOut
-	for _, item := range data.Results {
+	for _, item := range resultsBank {
 		outRow := ProcessedOut{
 			Title:    item.Title,
+			Episode:  item.Episode,
 			VideoURL: item.VideoURL,
 			FeedName: item.FeedName,
 		}
