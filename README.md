@@ -100,12 +100,13 @@ You can also use this project as an external package in your own Go code. To do 
 
 ## Flags
 
-| Flag           | Description                                                  | Example Usage                                   |
-|----------------|--------------------------------------------------------------|-------------------------------------------------|
-| `-list_id`     | The ID of the list to download videos from                   | `./rutubedl -list_id=123456`                    |
-| `-file_link`   | The direct URL of the file to download                       | `./rutubedl -file_link=https://...`             |
-| `-dir`         | The directory to store files and temporary chunks (optional) | `./rutubedl -file_link=https://... -dir=videos` |
-
+| Flag            | Description                                                  | Example Usage                                    |
+|-----------------|--------------------------------------------------------------|--------------------------------------------------|
+| `-list_id`      | The ID of the list to download videos from                   | `./rutubedl -list_id=123456`                     |
+| `-file_link`    | The direct URL of the file to download                       | `./rutubedl -file_link=https://...`              |
+| `-dir`          | The directory to store files and temporary chunks (optional) | `./rutubedl -file_link=https://... -dir=videos`  |
+| `-workers`      | The number of workers for chunk download (optional)          | `./rutubedl -file_link=https://... -workers=4`   |
+| `-with_ffmpeg`  | Use external ffmpeg for more reliable chunk concatenation    | `./rutubedl -file_link=https://... -with_ffmpeg` |
 ## Error Handling
 If an error occurs during the download process, the program will log the error and proceed to the next item in the list. For individual file downloads, an error will stop the process with an appropriate error message.
 
