@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -289,8 +290,24 @@ func mergeSegments(segmentFiles []string, outputFileName string) error {
 	return nil
 }
 
-// DownloadFile downloads the video file using multiple concurrent workers.
-func DownloadFile(fileLink string, customOutputDir *string, numWorkers int) error {
+func mergeSegmentsWithFfmpeg(segmentFiles []string, outputFileName string) error {
+	concatStr := "concat:" + strings.Join(segmentFiles, "|")
+
+	cmd := exec.Command("ffmpeg", "-i", concatStr, "-c", "copy", outputFileName)
+
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+
+	err := cmd.Run()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Chunks successfully processed and concatenated.")
+	return nil
+}
+
+func DownloadFile(fileLink string, customOutputDir *string, numWorkers int, withFfmpeg bool) error {
 	video, err := fetchVideoDetails(fileLink)
 	if err != nil {
 		return fmt.Errorf("error fetching video details: %v", err)
@@ -302,15 +319,12 @@ func DownloadFile(fileLink string, customOutputDir *string, numWorkers int) erro
 	}
 
 	outputFileName := filepath.Join(rootOutputDir, fmt.Sprintf("%s.mp4", video.GetTitle()))
-
-	// Ensure the output directory exists
 	tmpOutputDir := filepath.Join(rootOutputDir, video.GetID())
 	err = os.MkdirAll(tmpOutputDir, os.ModePerm)
 	if err != nil {
 		return fmt.Errorf("error creating output directory: %v", err)
 	}
 
-	// Create a progress bar with the total number of segments
 	numSegments := video.GetVideoFileSegmentsCount()
 	bar := progressbar.NewOptions(numSegments,
 		progressbar.OptionSetDescription("Downloading segments"),
@@ -319,33 +333,30 @@ func DownloadFile(fileLink string, customOutputDir *string, numWorkers int) erro
 		progressbar.OptionClearOnFinish(),
 	)
 
-	// Create channels for segment URLs and results
-	segmentChan := make(chan string, numSegments)
+	segmentChan := make(chan int, numSegments)
 	errChan := make(chan error, numWorkers)
-	var segmentFiles []string
-	var segmentFilesMutex sync.Mutex
 
-	// Launch workers
+	segmentFiles := make([]string, numSegments)
+
 	var wg sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for segmentURL := range segmentChan {
+			for i := range segmentChan {
+				segmentURL := video.GetVideoFileSegments()[i]
 				segmentFile, err := downloadSegmentWithContext(segmentURL, tmpOutputDir, bar)
 				if err != nil {
 					errChan <- fmt.Errorf("error downloading segment: %v", err)
 					return
 				}
-				segmentFilesMutex.Lock()
-				segmentFiles = append(segmentFiles, segmentFile)
-				segmentFilesMutex.Unlock()
+				segmentFiles[i] = segmentFile
 			}
 		}()
 	}
 
-	for _, segmentURL := range video.GetVideoFileSegments() {
-		segmentChan <- segmentURL
+	for i := range video.GetVideoFileSegments() {
+		segmentChan <- i
 	}
 	close(segmentChan)
 
@@ -358,9 +369,18 @@ func DownloadFile(fileLink string, customOutputDir *string, numWorkers int) erro
 		}
 	}
 
-	err = mergeSegments(segmentFiles, outputFileName)
-	if err != nil {
-		return fmt.Errorf("error merging segments: %v", err)
+	// Merge all the segments in the correct order
+	if withFfmpeg {
+		err = mergeSegmentsWithFfmpeg(segmentFiles, outputFileName)
+		if err != nil {
+			return fmt.Errorf("error merging segments with ffmpeg: %v", err)
+		}
+
+	} else {
+		err = mergeSegments(segmentFiles, outputFileName)
+		if err != nil {
+			return fmt.Errorf("error merging segments directly: %v", err)
+		}
 	}
 
 	// Cleanup temporary output directory
