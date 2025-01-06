@@ -318,7 +318,7 @@ func DownloadFile(fileLink string, customOutputDir *string, numWorkers int, with
 		rootOutputDir = *customOutputDir
 	}
 
-	outputFileName := filepath.Join(rootOutputDir, fmt.Sprintf("%s.mp4", video.GetTitle()))
+	outputFileName := filepath.Join(rootOutputDir, fmt.Sprintf("%s.mp4", strings.ReplaceAll(video.GetTitle(), "/", "-")))
 	tmpOutputDir := filepath.Join(rootOutputDir, video.GetID())
 	err = os.MkdirAll(tmpOutputDir, os.ModePerm)
 	if err != nil {
